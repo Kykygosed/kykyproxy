@@ -1,26 +1,31 @@
 const express = require('express');
-const path = require('path');
+const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Sert tous les fichiers statiques du dossier public/
-app.use(express.static(path.join(__dirname, 'public'), {
-  // Cache 1 jour pour les assets (icons, manifest)
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.html') || filePath.endsWith('.js')) {
-      res.setHeader('Cache-Control', 'no-cache');
-    } else {
-      res.setHeader('Cache-Control', 'public, max-age=86400');
+const TARGET = 'https://kykysearch.netlify.app';
+
+app.use('/', createProxyMiddleware({
+  target: TARGET,
+  changeOrigin: true,
+  // Réécrire les headers pour que Netlify accepte la requête
+  on: {
+    proxyReq: (proxyReq) => {
+      proxyReq.setHeader('host', 'kykysearch.netlify.app');
+    },
+    proxyRes: (proxyRes) => {
+      // Supprimer les headers qui bloqueraient le rendu côté client
+      delete proxyRes.headers['x-frame-options'];
+      delete proxyRes.headers['content-security-policy'];
+    },
+    error: (err, req, res) => {
+      console.error('Proxy error:', err.message);
+      res.status(502).send('Site temporairement indisponible.');
     }
   }
 }));
 
-// Fallback : toute route inconnue → index.html
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
 app.listen(PORT, () => {
-  console.log(`KykySearch server running on port ${PORT}`);
+  console.log(`Reverse proxy → ${TARGET} sur le port ${PORT}`);
 });
