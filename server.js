@@ -7,8 +7,8 @@ const { URL } = require('url');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-/* URL publique de CE serveur proxy (Render) */
-const PROXY_ORIGIN = process.env.PROXY_ORIGIN || 'https://kykyproxy.onrender.com';
+/* URL publique de CE serveur sur Render */
+const PROXY_ORIGIN = (process.env.PROXY_ORIGIN || 'https://kykyproxy.onrender.com').replace(/\/$/, '');
 
 /* ─────────────────────────────────────
    CORS
@@ -22,86 +22,109 @@ app.use((req, res, next) => {
 
 /* ─────────────────────────────────────
    Script injecté dans chaque page HTML
-   Intercepte fetch, XHR, import() dynamiques
-   et le public path webpack pour les chunks
 ───────────────────────────────────────*/
 function buildInjectedScript(targetOrigin) {
-  return `
-<script>
+  return `<script data-kyky="1">
 (function() {
-  var PROXY   = '${PROXY_ORIGIN}/proxy?url=';
-  var BASE    = '${targetOrigin}';
+  var PROXY_ORIGIN = '${PROXY_ORIGIN}';
+  var TARGET       = '${targetOrigin}';
+  var PROXY_BASE   = PROXY_ORIGIN + '/proxy?url=';
 
-  function toProxy(url) {
+  /* ── Convertit n'importe quelle URL en URL proxy ── */
+  function wrap(url) {
     if (!url || typeof url !== 'string') return url;
-    if (url.startsWith('data:') || url.startsWith('blob:') ||
-        url.startsWith('javascript:') || url.indexOf(PROXY) !== -1) return url;
+    var u = url.trim();
+    if (!u || u === '#' || u.startsWith('data:') || u.startsWith('blob:') ||
+        u.startsWith('javascript:') || u.startsWith('mailto:') ||
+        u.indexOf(PROXY_ORIGIN) === 0) return url;
     try {
-      var abs = new URL(url, BASE).href;
-      // Ne proxifie que les URLs externes (pas déjà sur le proxy)
-      if (abs.indexOf('${PROXY_ORIGIN}') === 0) return url;
-      return PROXY + encodeURIComponent(abs);
+      /* URL relative → absolue par rapport à la cible */
+      var abs = new URL(u, TARGET).href;
+      if (abs.indexOf(PROXY_ORIGIN) === 0) return url;
+      return PROXY_BASE + encodeURIComponent(abs);
     } catch(e) { return url; }
   }
 
   /* ── fetch ── */
   var _fetch = window.fetch.bind(window);
   window.fetch = function(input, init) {
-    if (typeof input === 'string') input = toProxy(input);
-    else if (input && input.url) input = new Request(toProxy(input.url), input);
+    if (typeof input === 'string') input = wrap(input);
+    else if (input instanceof Request) input = new Request(wrap(input.url), input);
     return _fetch(input, init);
   };
 
   /* ── XMLHttpRequest ── */
   var _open = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(method, url) {
+  XMLHttpRequest.prototype.open = function() {
     var args = Array.prototype.slice.call(arguments);
-    args[1] = toProxy(url);
+    if (typeof args[1] === 'string') args[1] = wrap(args[1]);
     return _open.apply(this, args);
   };
 
-  /* ── WebSocket ── */
-  var _WS = window.WebSocket;
-  window.WebSocket = function(url, protocols) {
-    // WebSocket ne peut pas passer par un proxy HTTP simple, on laisse passer
-    return protocols ? new _WS(url, protocols) : new _WS(url);
-  };
-  window.WebSocket.prototype = _WS.prototype;
-  window.WebSocket.CONNECTING  = _WS.CONNECTING;
-  window.WebSocket.OPEN        = _WS.OPEN;
-  window.WebSocket.CLOSING     = _WS.CLOSING;
-  window.WebSocket.CLOSED      = _WS.CLOSED;
-
-  /* ── Webpack public path (chunks Discord, YouTube, etc.) ──
-     On surveille __webpack_require__.p dès qu'il est défini          */
-  var _pubPath = '/';
-  Object.defineProperty(window, '__webpack_public_path__', {
-    get: function() { return PROXY + encodeURIComponent(BASE + '/'); },
-    set: function(v) { _pubPath = v; },
-    configurable: true
-  });
-
-  /* Patch générique pour tout objet qui stocke le public path webpack */
-  var patchWebpack = function(obj) {
-    if (!obj) return;
-    ['p','publicPath'].forEach(function(key) {
-      if (typeof obj[key] === 'string' && obj[key].indexOf('http') === 0) {
-        obj[key] = PROXY + encodeURIComponent(obj[key]);
+  /* ── history.pushState / replaceState ──
+     YouTube/SPA font des navigations relatives : /results?q=...
+     On les réécrit pour rester dans le proxy                     */
+  function wrapHistoryMethod(method) {
+    var orig = history[method].bind(history);
+    history[method] = function(state, title, url) {
+      if (url) {
+        try {
+          var abs = new URL(url, TARGET).href;
+          /* URL interne au site → on met à jour TARGET et on reste dans le proxy */
+          if (abs.indexOf(TARGET) === 0 || new URL(abs).hostname === new URL(TARGET).hostname) {
+            TARGET = new URL(abs).origin; /* met à jour la base */
+            /* On appelle la méthode native avec l'URL proxy pour que le
+               bouton "retour" du navigateur et les refresh fonctionnent */
+            return orig(state, title, PROXY_BASE + encodeURIComponent(abs));
+          }
+        } catch(e) {}
       }
-    });
-  };
+      return orig(state, title, url);
+    };
+  }
+  wrapHistoryMethod('pushState');
+  wrapHistoryMethod('replaceState');
 
-  /* ── document.createElement('script') ──
-     Pour les frameworks qui injectent des scripts dynamiquement         */
-  var _createElement = document.createElement.bind(document);
+  /* ── document.createElement (scripts dynamiques) ── */
+  var _create = document.createElement.bind(document);
   document.createElement = function(tag) {
-    var el = _createElement(tag);
-    if (tag.toLowerCase() === 'script') {
-      var _setSrc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
-      if (_setSrc) {
+    var el = _create(tag);
+    var tagLow = (tag || '').toLowerCase();
+
+    /* <script src> */
+    if (tagLow === 'script') {
+      var srcDesc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+      if (srcDesc) {
         Object.defineProperty(el, 'src', {
-          get: function() { return _setSrc.get.call(this); },
-          set: function(v) { _setSrc.set.call(this, toProxy(v)); },
+          get: function() { return srcDesc.get.call(this); },
+          set: function(v) { srcDesc.set.call(this, wrap(v)); },
+          configurable: true
+        });
+      }
+    }
+
+    /* <img src> et <img srcset> — YouTube charge ses images via JS */
+    if (tagLow === 'img') {
+      var imgSrcDesc    = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+      var imgSrcsetDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'srcset');
+      if (imgSrcDesc) {
+        Object.defineProperty(el, 'src', {
+          get: function() { return imgSrcDesc.get.call(this); },
+          set: function(v) { imgSrcDesc.set.call(this, wrap(v)); },
+          configurable: true
+        });
+      }
+      if (imgSrcsetDesc) {
+        Object.defineProperty(el, 'srcset', {
+          get: function() { return imgSrcsetDesc.get.call(this); },
+          set: function(v) {
+            var rw = v.split(',').map(function(p) {
+              var parts = p.trim().split(/\\s+/);
+              if (parts[0]) parts[0] = wrap(parts[0]);
+              return parts.join(' ');
+            }).join(', ');
+            imgSrcsetDesc.set.call(this, rw);
+          },
           configurable: true
         });
       }
@@ -109,31 +132,56 @@ function buildInjectedScript(targetOrigin) {
     return el;
   };
 
-  /* ── History API (navigation SPA) ── */
-  var _pushState    = history.pushState.bind(history);
-  var _replaceState = history.replaceState.bind(history);
-  history.pushState = function(state, title, url) {
-    return _pushState(state, title, url); // on laisse la SPA gérer elle-même
-  };
+  /* ── Patch global img.src sur les images déjà dans le DOM ──
+     MutationObserver pour attraper les images injectées après le chargement */
+  function patchImg(img) {
+    var proto = HTMLImageElement.prototype;
+    var srcDesc = Object.getOwnPropertyDescriptor(proto, 'src');
+    if (!img._kykyPatched && srcDesc) {
+      img._kykyPatched = true;
+      Object.defineProperty(img, 'src', {
+        get: function() { return srcDesc.get.call(this); },
+        set: function(v) { srcDesc.set.call(this, wrap(v)); },
+        configurable: true
+      });
+    }
+  }
+  var observer = new MutationObserver(function(mutations) {
+    mutations.forEach(function(m) {
+      m.addedNodes.forEach(function(node) {
+        if (node.nodeType !== 1) return;
+        if (node.tagName === 'IMG') patchImg(node);
+        node.querySelectorAll && node.querySelectorAll('img').forEach(patchImg);
+      });
+    });
+  });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 
-  console.log('[KykyProxy] Intercepteurs actifs pour', BASE);
+  /* ── Webpack public path ── */
+  var _p = '';
+  try {
+    Object.defineProperty(window, '__webpack_public_path__', {
+      get: function() { return PROXY_BASE + encodeURIComponent(TARGET + '/'); },
+      set: function(v) { _p = v; },
+      configurable: true
+    });
+  } catch(e) {}
+
+  console.log('[KykyProxy] actif →', TARGET);
 })();
 </script>`;
 }
 
 /* ─────────────────────────────────────
-   GET /proxy?url=<url encodée>
+   Fonction proxy centrale
 ───────────────────────────────────────*/
-app.get('/proxy', (req, res) => {
-  const raw = req.query.url;
-  if (!raw) return res.status(400).send('Paramètre ?url= manquant.');
-
+function fetchAndProxy(targetUrl, req, res) {
   let target;
   try {
-    target = new URL(raw);
+    target = new URL(targetUrl);
     if (!['http:', 'https:'].includes(target.protocol)) throw new Error();
   } catch {
-    return res.status(400).send('URL invalide.');
+    return res.status(400).send('URL invalide : ' + targetUrl);
   }
 
   const driver = target.protocol === 'https:' ? https : http;
@@ -145,7 +193,7 @@ app.get('/proxy', (req, res) => {
     method   : 'GET',
     headers  : {
       'User-Agent'      : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept'          : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept'          : req.headers['accept'] || 'text/html,application/xhtml+xml,*/*;q=0.8',
       'Accept-Language' : 'fr,en;q=0.9',
       'Accept-Encoding' : 'gzip, deflate',
       'Host'            : target.hostname,
@@ -168,46 +216,39 @@ app.get('/proxy', (req, res) => {
 
     /* ── Headers ── */
     const BLOCKED = new Set([
-      'x-frame-options',
-      'content-security-policy',
-      'content-security-policy-report-only',
-      'strict-transport-security',
-      'x-content-type-options',
-      'transfer-encoding',
-      'content-encoding',
-      'content-length',
+      'x-frame-options', 'content-security-policy',
+      'content-security-policy-report-only', 'strict-transport-security',
+      'x-content-type-options', 'transfer-encoding',
+      'content-encoding', 'content-length',
     ]);
     Object.entries(proxyRes.headers).forEach(([k, v]) => {
-      if (!BLOCKED.has(k.toLowerCase())) {
-        try { res.setHeader(k, v); } catch {}
-      }
+      if (!BLOCKED.has(k.toLowerCase())) { try { res.setHeader(k, v); } catch {} }
     });
+    res.setHeader('Access-Control-Allow-Origin', '*');
     res.status(proxyRes.statusCode);
 
-    const encoding    = proxyRes.headers['content-encoding'];
-    const contentType = (proxyRes.headers['content-type'] || '').toLowerCase();
-    const isHtml      = contentType.includes('text/html');
-    const isJs        = contentType.includes('javascript');
-    const isCss       = contentType.includes('text/css');
-
     /* ── Décompression ── */
+    const encoding    = proxyRes.headers['content-encoding'] || '';
+    const contentType = (proxyRes.headers['content-type'] || '').toLowerCase();
+    const isHtml = contentType.includes('text/html');
+    const isJs   = contentType.includes('javascript');
+    const isCss  = contentType.includes('text/css');
+
     let stream = proxyRes;
     if      (encoding === 'gzip')    stream = proxyRes.pipe(zlib.createGunzip());
     else if (encoding === 'deflate') stream = proxyRes.pipe(zlib.createInflate());
     else if (encoding === 'br')      stream = proxyRes.pipe(zlib.createBrotliDecompress());
 
-    function onStreamError(err) {
+    function onError(err) {
       console.error('[proxy] stream error:', err.message);
       if (!res.headersSent) res.status(502).end();
     }
 
-    /* ── Texte (HTML / JS / CSS) → buffer puis réécriture ── */
     if (isHtml || isJs || isCss) {
       const chunks = [];
       stream.on('data', c => chunks.push(c));
       stream.on('end', () => {
         let text = Buffer.concat(chunks).toString('utf-8');
-
         if (isHtml) {
           text = rewriteHtml(text, target);
           res.setHeader('content-type', 'text/html; charset=utf-8');
@@ -218,14 +259,12 @@ app.get('/proxy', (req, res) => {
           text = rewriteCss(text, target);
           res.setHeader('content-type', 'text/css; charset=utf-8');
         }
-
         res.end(text);
       });
-      stream.on('error', onStreamError);
+      stream.on('error', onError);
     } else {
-      /* Binaires, images, fonts → stream direct */
       stream.pipe(res);
-      stream.on('error', onStreamError);
+      stream.on('error', onError);
     }
   });
 
@@ -233,13 +272,56 @@ app.get('/proxy', (req, res) => {
     proxyReq.destroy();
     if (!res.headersSent) res.status(504).send('Délai dépassé.');
   });
-
   proxyReq.on('error', err => {
     console.error('[proxy] erreur:', err.message);
-    if (!res.headersSent) res.status(502).send('Site temporairement indisponible.');
+    if (!res.headersSent) res.status(502).send('Site indisponible.');
   });
-
   proxyReq.end();
+}
+
+/* ─────────────────────────────────────
+   Route principale /proxy?url=
+───────────────────────────────────────*/
+app.get('/proxy', (req, res) => {
+  const raw = req.query.url;
+  if (!raw) return res.status(400).send('Paramètre ?url= manquant.');
+  fetchAndProxy(raw, req, res);
+});
+
+/* ─────────────────────────────────────
+   Catch-all : /results?search_query=...
+   Quand YouTube (ou autre SPA) fait un pushState et que
+   l'utilisateur rafraîchit la page, on atterrit ici.
+   On essaie de reconstruire l'URL cible depuis le Referer.
+───────────────────────────────────────*/
+app.use((req, res) => {
+  const referer = req.headers['referer'] || '';
+  let baseOrigin = null;
+
+  /* Extraire l'origin cible depuis le Referer proxy */
+  try {
+    const refUrl    = new URL(referer);
+    const proxied   = refUrl.searchParams.get('url');
+    if (proxied) {
+      baseOrigin = new URL(proxied).origin;
+    }
+  } catch {}
+
+  if (baseOrigin) {
+    const targetUrl = baseOrigin + req.path + (req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '');
+    return fetchAndProxy(targetUrl, req, res);
+  }
+
+  /* Pas de Referer exploitable → page d'erreur utile */
+  res.status(404).send(`
+    <html><head><title>KykyProxy</title></head>
+    <body style="font-family:sans-serif;padding:2rem;background:#070d1f;color:#e4ecff">
+      <h2>Page non trouvée</h2>
+      <p>Chemin demandé : <code>${req.path}</code></p>
+      <p>Pour naviguer via le proxy, utilise :<br>
+      <code>${PROXY_ORIGIN}/proxy?url=https://ton-site.com</code></p>
+    </body></html>
+  `);
 });
 
 /* ─────────────────────────────────────
@@ -257,58 +339,45 @@ function toProxyUrl(raw, base) {
 }
 
 function rewriteHtml(html, base) {
-  /* href / src / action */
-  html = html.replace(
-    /((?:href|src|action)\s*=\s*)(['"])(.*?)\2/gi,
-    (_, attr, q, val) => `${attr}${q}${toProxyUrl(val, base)}${q}`
-  );
+  html = html.replace(/((?:href|src|action)\s*=\s*)(['"])(.*?)\2/gi,
+    (_, a, q, v) => `${a}${q}${toProxyUrl(v, base)}${q}`);
 
-  /* srcset */
   html = html.replace(/srcset\s*=\s*(['"])(.*?)\1/gi, (_, q, val) => {
-    const rw = val.split(',').map(part => {
-      const [u, ...rest] = part.trim().split(/\s+/);
-      return u ? [toProxyUrl(u, base), ...rest].join(' ') : part;
+    const rw = val.split(',').map(p => {
+      const [u, ...r] = p.trim().split(/\s+/);
+      return u ? [toProxyUrl(u, base), ...r].join(' ') : p;
     }).join(', ');
     return `srcset=${q}${rw}${q}`;
   });
 
-  /* CSS url() dans <style> */
   html = html.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi,
-    (_, q, u) => `url(${q}${toProxyUrl(u, base)}${q})`
-  );
+    (_, q, u) => `url(${q}${toProxyUrl(u, base)}${q})`);
 
-  /* meta refresh */
   html = html.replace(/(content\s*=\s*['"][^'"]*?url=)([^'"&\s]+)/gi,
-    (_, pre, u) => `${pre}${toProxyUrl(u, base)}`
-  );
+    (_, pre, u) => `${pre}${toProxyUrl(u, base)}`);
 
-  /* Injection du script intercepteur juste après <head> */
-  html = html.replace(/<head([^>]*)>/i,
-    (m) => m + buildInjectedScript(base.origin)
-  );
+  /* Injection du script intercepteur */
+  html = html.replace(/<head([^>]*)>/i, m => m + buildInjectedScript(base.origin));
 
   return html;
 }
 
 /* ─────────────────────────────────────
-   Réécriture JS — cible les URLs absolues dans les strings
-   et les chemins de chunks webpack
+   Réécriture JS
 ───────────────────────────────────────*/
 function rewriteJs(js, base) {
-  const origin = base.origin;
-
-  /* Strings contenant l'origine cible : "https://discord.com/..." */
+  /* URLs absolues de l'origin cible dans les strings */
   js = js.replace(
-    new RegExp(`(['"\`])(https?://${escapeRegex(base.hostname)}[^'"\`]*)\\1`, 'g'),
+    new RegExp(`(['"\`])(https?://${escRx(base.hostname)}[^'"\`\\\\]*)\\1`, 'g'),
     (_, q, url) => `${q}${PROXY_ORIGIN}/proxy?url=${encodeURIComponent(url)}${q}`
   );
 
-  /* Public path webpack souvent stocké comme "https://cdn.discord.com/" ou "/" */
+  /* __webpack_require__.p = "..." */
   js = js.replace(
     /(__webpack_require__\s*\.\s*p\s*=\s*)(['"`])(https?:\/\/[^'"`]+|\/[^'"`]*)(['"`])/g,
-    (_, prefix, q, path, q2) => {
-      const abs = path.startsWith('http') ? path : origin + path;
-      return `${prefix}${q}${PROXY_ORIGIN}/proxy?url=${encodeURIComponent(abs)}${q2}`;
+    (_, pre, q, path, q2) => {
+      const abs = path.startsWith('http') ? path : base.origin + path;
+      return `${pre}${q}${PROXY_ORIGIN}/proxy?url=${encodeURIComponent(abs)}${q2}`;
     }
   );
 
@@ -319,23 +388,14 @@ function rewriteJs(js, base) {
    Réécriture CSS
 ───────────────────────────────────────*/
 function rewriteCss(css, base) {
-  /* url(...) */
   css = css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi,
-    (_, q, u) => `url(${q}${toProxyUrl(u, base)}${q})`
-  );
-  /* @import "..." */
+    (_, q, u) => `url(${q}${toProxyUrl(u, base)}${q})`);
   css = css.replace(/@import\s+(['"])(.*?)\1/gi,
-    (_, q, u) => `@import ${q}${toProxyUrl(u, base)}${q}`
-  );
+    (_, q, u) => `@import ${q}${toProxyUrl(u, base)}${q}`);
   return css;
 }
 
-/* ─────────────────────────────────────
-   Utils
-───────────────────────────────────────*/
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+function escRx(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
 /* ─────────────────────────────────────
    Démarrage
