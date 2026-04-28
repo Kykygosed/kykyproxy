@@ -3,6 +3,7 @@ const https        = require('https');
 const http         = require('http');
 const zlib         = require('zlib');
 const { URL }      = require('url');
+
 /* Parse cookies sans dépendance externe */
 function parseCookies(req) {
   const raw = req.headers['cookie'] || '';
@@ -37,7 +38,6 @@ app.get('/', (req, res) => {
 
 /* ─────────────────────────────────────
    Toggle on/off via cookie
-   GET /kyky-toggle → inverse l'état et redirige
 ───────────────────────────────────────*/
 app.get('/kyky-toggle', (req, res) => {
   const current = req.cookies['kyky_off'] === '1';
@@ -45,10 +45,8 @@ app.get('/kyky-toggle', (req, res) => {
   res.setHeader('Set-Cookie',
     `kyky_off=${next}; Path=/; Max-Age=86400; SameSite=None; Secure`
   );
-  /* Redirige vers la page qui a demandé le toggle, ou le frontend */
   const back = req.headers['referer'] || FRONTEND_URL;
   if (next === '1') {
-    /* Proxy OFF : on essaie de rediriger vers le vrai site */
     try {
       const refUrl  = new URL(back);
       const proxied = refUrl.searchParams.get('url');
@@ -64,54 +62,54 @@ app.get('/kyky-toggle', (req, res) => {
 ───────────────────────────────────────*/
 function buildHeaders(target, reqHeaders) {
   return {
-    'Host'                   : target.hostname,
-    'User-Agent'             : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept'                 : reqHeaders['accept'] || 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language'        : 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding'        : 'gzip, deflate, br',
-    'Referer'                : target.origin + '/',
-    'Origin'                 : target.origin,
-    'Connection'             : 'keep-alive',
+    'Host'                    : target.hostname,
+    'User-Agent'              : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept'                  : reqHeaders['accept'] || 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language'         : 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept-Encoding'         : 'gzip, deflate, br',
+    'Referer'                 : target.origin + '/',
+    'Origin'                  : target.origin,
+    'Connection'              : 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest'         : reqHeaders['sec-fetch-dest']  || 'document',
-    'Sec-Fetch-Mode'         : reqHeaders['sec-fetch-mode']  || 'navigate',
-    'Sec-Fetch-Site'         : 'none',
-    'Sec-Fetch-User'         : '?1',
-    'Sec-CH-UA'              : '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-    'Sec-CH-UA-Mobile'       : '?0',
-    'Sec-CH-UA-Platform'     : '"Windows"',
-    'Cache-Control'          : 'max-age=0',
-    'DNT'                    : '1',
+    'Sec-Fetch-Dest'          : reqHeaders['sec-fetch-dest']  || 'document',
+    'Sec-Fetch-Mode'          : reqHeaders['sec-fetch-mode']  || 'navigate',
+    'Sec-Fetch-Site'          : 'none',
+    'Sec-Fetch-User'          : '?1',
+    'Sec-CH-UA'               : '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    'Sec-CH-UA-Mobile'        : '?0',
+    'Sec-CH-UA-Platform'      : '"Windows"',
+    'Cache-Control'           : 'max-age=0',
+    'DNT'                     : '1',
   };
 }
 
 /* ─────────────────────────────────────
-   Switch UI injecté dans chaque page HTML
+   Toggle UI injecté dans chaque page HTML proxifiée
 ───────────────────────────────────────*/
 function buildToggleUI(proxyOff) {
-  const isOff  = proxyOff === '1';
-  const label  = isOff  ? '🔴 Proxy OFF' : '🟢 Proxy ON';
-  const bg     = isOff  ? '#c0392b'       : '#27ae60';
+  const isOff = proxyOff === '1';
+  const label = isOff ? '🔴 Proxy OFF' : '🟢 Proxy ON';
+  const bg    = isOff ? '#c0392b'      : '#27ae60';
   return `
 <style>
   #kyky-toggle-btn {
     position: fixed; bottom: 18px; right: 18px; z-index: 2147483647;
     background: ${bg}; color: #fff; font-family: sans-serif;
-    font-size: 14px; font-weight: 700; padding: 10px 18px;
+    font-size: 13px; font-weight: 700; padding: 9px 16px;
     border-radius: 50px; box-shadow: 0 4px 15px rgba(0,0,0,.35);
-    cursor: pointer; border: none; display: flex; align-items: center; gap: 8px;
+    cursor: pointer; border: none; display: flex; align-items: center; gap: 7px;
     transition: background .2s, transform .1s;
     text-decoration: none !important;
   }
   #kyky-toggle-btn:hover { transform: scale(1.05); filter: brightness(1.1); }
   #kyky-toggle-slider {
-    width: 36px; height: 20px; background: rgba(255,255,255,.35);
+    width: 34px; height: 19px; background: rgba(255,255,255,.35);
     border-radius: 10px; position: relative; transition: background .2s;
   }
   #kyky-toggle-slider::after {
     content:''; position:absolute; top:3px;
-    left: ${isOff ? '3px' : '17px'};
-    width:14px; height:14px; background:#fff;
+    left: ${isOff ? '3px' : '15px'};
+    width:13px; height:13px; background:#fff;
     border-radius:50%; transition: left .2s;
   }
 </style>
@@ -122,7 +120,326 @@ function buildToggleUI(proxyOff) {
 }
 
 /* ─────────────────────────────────────
-   Script injecté dans chaque HTML
+   Log Viewer injecté dans chaque page HTML proxifiée
+   Capture: console.*, fetch/XHR errors, window errors, 404s
+───────────────────────────────────────*/
+function buildLogViewerScript(targetOrigin) {
+  return `<script data-kyky-logs="1">
+(function(){
+  /* ── Storage ── */
+  var LOGS = [];
+  var MAX_LOGS = 500;
+  var counts = { all:0, error:0, warn:0, log:0, network:0 };
+  var activeFilter = 'all';
+  var panelOpen = false;
+  var fab, panel, logListEl, badgeEl, filterBtns = {};
+
+  var STYLES = {
+    error:   { bg:'rgba(255,80,80,.13)',  fg:'#ff7a9a', icon:'🔴', label:'error'   },
+    warn:    { bg:'rgba(255,200,0,.11)',  fg:'#ffd166', icon:'🟡', label:'warn'    },
+    log:     { bg:'rgba(255,255,255,.03)',fg:'#c8d8f0', icon:'⚪', label:'log'     },
+    info:    { bg:'rgba(77,158,255,.09)', fg:'#7bb8ff', icon:'🔵', label:'log'     },
+    debug:   { bg:'transparent',          fg:'#7a8baa', icon:'◻️', label:'log'     },
+    network: { bg:'rgba(255,120,60,.13)', fg:'#ff9a6b', icon:'🌐', label:'network' },
+    promise: { bg:'rgba(255,80,80,.13)',  fg:'#ff7a9a', icon:'⚠️', label:'error'   },
+  };
+
+  function serialize(a) {
+    if (a === null) return 'null';
+    if (a === undefined) return 'undefined';
+    try {
+      if (typeof a === 'object') return JSON.stringify(a).slice(0, 300);
+      return String(a).slice(0, 500);
+    } catch(e) { return '[Object]'; }
+  }
+  function esc(s) {
+    return String(s)
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+  }
+
+  /* ── Intercept console ── */
+  ['log','info','warn','error','debug'].forEach(function(m) {
+    var orig = console[m].bind(console);
+    console[m] = function() {
+      orig.apply(console, arguments);
+      var msg = Array.prototype.slice.call(arguments).map(serialize).join(' ');
+      addLog(m, msg);
+    };
+  });
+
+  /* ── Intercept window errors ── */
+  window.addEventListener('error', function(e) {
+    var src = e.filename ? ' (' + e.filename.split('/').pop() + ':' + e.lineno + ')' : '';
+    addLog('error', (e.message||'Script error') + src);
+  }, true);
+  window.addEventListener('unhandledrejection', function(e) {
+    var reason = (e.reason && e.reason.message) ? e.reason.message : serialize(e.reason);
+    addLog('promise', 'Unhandled Promise rejection: ' + reason);
+  });
+
+  /* ── Intercept fetch ── */
+  var _fetch = window.fetch ? window.fetch.bind(window) : null;
+  if (_fetch) {
+    window.fetch = function(input, init) {
+      var url = typeof input === 'string' ? input : (input && input.url ? input.url : String(input));
+      var shortUrl = url.replace(/.*proxy\\?url=/, '').slice(0, 120);
+      return _fetch(input, init).then(function(res) {
+        if (!res.ok) addLog('network', '[' + res.status + '] ' + shortUrl);
+        return res;
+      }, function(err) {
+        addLog('network', '[FAILED] ' + shortUrl + ' — ' + err.message);
+        throw err;
+      });
+    };
+  }
+
+  /* ── Intercept XHR ── */
+  var _xhrOpen = XMLHttpRequest.prototype.open;
+  var _xhrSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url) {
+    this._kykyUrl = String(url).replace(/.*proxy\\?url=/, '').slice(0, 120);
+    return _xhrOpen.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function() {
+    var self = this;
+    this.addEventListener('load', function() {
+      if (self.status >= 400) addLog('network', '[' + self.status + '] XHR ' + (self._kykyUrl||'?'));
+    });
+    this.addEventListener('error', function() {
+      addLog('network', '[FAILED] XHR ' + (self._kykyUrl||'?'));
+    });
+    return _xhrSend.apply(this, arguments);
+  };
+
+  /* ── Add log entry ── */
+  function addLog(level, msg) {
+    var s = STYLES[level] || STYLES.log;
+    var cat = s.label;
+    var entry = { level:level, cat:cat, msg:msg, time:now(), s:s };
+    LOGS.push(entry);
+    if (LOGS.length > MAX_LOGS) LOGS.shift();
+    counts.all++;
+    counts[cat] = (counts[cat]||0) + 1;
+    updateBadge();
+    if (panelOpen && logListEl) {
+      if (activeFilter === 'all' || activeFilter === cat) appendEntry(entry);
+      logListEl.scrollTop = logListEl.scrollHeight;
+    }
+  }
+
+  function now() {
+    var d = new Date();
+    return d.toISOString().slice(11,23);
+  }
+
+  /* ── Build UI (deferred) ── */
+  function buildUI() {
+    var style = document.createElement('style');
+    style.setAttribute('data-kyky-logs', '1');
+    style.textContent = [
+      '#kyky-log-fab{position:fixed;bottom:70px;right:18px;z-index:2147483646;',
+      'background:#1a2540;color:#7bb8ff;border:1.5px solid rgba(99,153,255,.35);',
+      'border-radius:50px;padding:7px 14px;font-family:monospace;font-size:12px;',
+      'font-weight:700;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.4);',
+      'display:flex;align-items:center;gap:6px;transition:all .2s;white-space:nowrap;}',
+      '#kyky-log-fab:hover{border-color:#4d9eff;background:#1e2d58;}',
+      '#kyky-log-badge{background:#e74c3c;color:#fff;border-radius:50px;',
+      'padding:1px 6px;font-size:10px;display:none;}',
+      '#kyky-log-badge.show{display:inline-block;}',
+      '#kyky-log-panel{position:fixed;bottom:0;right:0;width:min(600px,100vw);',
+      'height:min(420px,60vh);background:#0d1530;border:1px solid rgba(99,153,255,.25);',
+      'border-bottom:none;border-right:none;z-index:2147483645;display:none;',
+      'flex-direction:column;font-family:monospace;font-size:12px;',
+      'box-shadow:-4px -4px 30px rgba(0,0,0,.6);}',
+      '#kyky-log-panel.open{display:flex;}',
+      '#kyky-log-head{display:flex;align-items:center;gap:6px;padding:7px 10px;',
+      'background:#111d3a;border-bottom:1px solid rgba(99,153,255,.18);flex-shrink:0;}',
+      '#kyky-log-head span{color:#4d9eff;font-size:11px;font-weight:700;flex:1;}',
+      '.kyky-fbtn{background:rgba(77,158,255,.1);border:1px solid rgba(77,158,255,.2);',
+      'color:#7bb8ff;border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;',
+      'font-family:monospace;transition:all .15s;}',
+      '.kyky-fbtn:hover,.kyky-fbtn.active{background:rgba(77,158,255,.28);',
+      'border-color:#4d9eff;color:#fff;}',
+      '.kyky-fbtn.f-error.active{background:rgba(255,80,80,.2);border-color:#ff6b8a;color:#ff6b8a;}',
+      '.kyky-fbtn.f-warn.active{background:rgba(255,200,0,.15);border-color:#ffd166;color:#ffd166;}',
+      '.kyky-fbtn.f-network.active{background:rgba(255,120,60,.2);border-color:#ff9a6b;color:#ff9a6b;}',
+      '#kyky-log-clear{background:transparent;border:none;color:#4e6491;cursor:pointer;',
+      'font-size:16px;padding:0 4px;line-height:1;transition:color .15s;}',
+      '#kyky-log-clear:hover{color:#ff6b8a;}',
+      '#kyky-log-close{background:transparent;border:none;color:#4e6491;cursor:pointer;',
+      'font-size:18px;padding:0 4px;line-height:1;transition:color .15s;}',
+      '#kyky-log-close:hover{color:#e74c3c;}',
+      '#kyky-log-list{flex:1;overflow-y:auto;padding:4px 0;}',
+      '#kyky-log-list::-webkit-scrollbar{width:4px;}',
+      '#kyky-log-list::-webkit-scrollbar-track{background:#0d1530;}',
+      '#kyky-log-list::-webkit-scrollbar-thumb{background:#1e2d58;border-radius:2px;}',
+      '.kyky-entry{display:flex;align-items:flex-start;gap:6px;padding:3px 10px;',
+      'border-bottom:1px solid rgba(255,255,255,.04);line-height:1.5;}',
+      '.kyky-entry:hover{background:rgba(255,255,255,.03);}',
+      '.kyky-entry-time{color:#2a3a5c;font-size:10px;flex-shrink:0;padding-top:1px;}',
+      '.kyky-entry-icon{flex-shrink:0;font-size:10px;padding-top:2px;}',
+      '.kyky-entry-msg{flex:1;word-break:break-all;white-space:pre-wrap;color:#c8d8f0;}',
+      '#kyky-log-empty{color:#2a3a5c;text-align:center;padding:30px;font-size:11px;}',
+    ].join('');
+    document.head.appendChild(style);
+
+    /* FAB */
+    fab = document.createElement('div');
+    fab.id = 'kyky-log-fab';
+    fab.innerHTML = '🐛 Logs <span id="kyky-log-badge"></span>';
+    badgeEl = fab.querySelector('#kyky-log-badge');
+    fab.addEventListener('click', togglePanel);
+    document.body.appendChild(fab);
+
+    /* Panel */
+    panel = document.createElement('div');
+    panel.id = 'kyky-log-panel';
+
+    var head = document.createElement('div');
+    head.id = 'kyky-log-head';
+
+    var title = document.createElement('span');
+    title.textContent = '🐛 KykyProxy Console';
+
+    var filters = [
+      ['all',     'All',     ''],
+      ['error',   'Errors',  'f-error'],
+      ['warn',    'Warns',   'f-warn'],
+      ['log',     'Logs',    ''],
+      ['network', 'Network', 'f-network'],
+    ];
+    filters.forEach(function(f) {
+      var btn = document.createElement('button');
+      btn.className = 'kyky-fbtn ' + f[2];
+      btn.textContent = f[1];
+      if (f[0] === 'all') btn.classList.add('active');
+      btn.addEventListener('click', function() { setFilter(f[0]); });
+      filterBtns[f[0]] = btn;
+      head.appendChild(btn);
+    });
+
+    var clearBtn = document.createElement('button');
+    clearBtn.id = 'kyky-log-clear';
+    clearBtn.title = 'Vider les logs';
+    clearBtn.textContent = '🗑';
+    clearBtn.addEventListener('click', clearLogs);
+
+    var closeBtn = document.createElement('button');
+    closeBtn.id = 'kyky-log-close';
+    closeBtn.title = 'Fermer';
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', togglePanel);
+
+    head.insertBefore(title, head.firstChild);
+    head.appendChild(clearBtn);
+    head.appendChild(closeBtn);
+
+    logListEl = document.createElement('div');
+    logListEl.id = 'kyky-log-list';
+
+    panel.appendChild(head);
+    panel.appendChild(logListEl);
+    document.body.appendChild(panel);
+  }
+
+  function appendEntry(entry) {
+    if (!logListEl) return;
+    var empty = logListEl.querySelector('#kyky-log-empty');
+    if (empty) empty.remove();
+
+    var row = document.createElement('div');
+    row.className = 'kyky-entry';
+    row.style.background = entry.s.bg;
+
+    var timeEl = document.createElement('span');
+    timeEl.className = 'kyky-entry-time';
+    timeEl.textContent = entry.time;
+
+    var icon = document.createElement('span');
+    icon.className = 'kyky-entry-icon';
+    icon.textContent = entry.s.icon;
+
+    var msg = document.createElement('span');
+    msg.className = 'kyky-entry-msg';
+    msg.style.color = entry.s.fg;
+    msg.textContent = entry.msg;
+
+    row.appendChild(timeEl);
+    row.appendChild(icon);
+    row.appendChild(msg);
+    logListEl.appendChild(row);
+  }
+
+  function renderAll() {
+    if (!logListEl) return;
+    logListEl.innerHTML = '';
+    var filtered = LOGS.filter(function(e) {
+      return activeFilter === 'all' || e.cat === activeFilter;
+    });
+    if (filtered.length === 0) {
+      logListEl.innerHTML = '<div id="kyky-log-empty">Aucun log pour cette catégorie</div>';
+      return;
+    }
+    filtered.forEach(appendEntry);
+    logListEl.scrollTop = logListEl.scrollHeight;
+  }
+
+  function setFilter(f) {
+    activeFilter = f;
+    Object.keys(filterBtns).forEach(function(k) {
+      filterBtns[k].classList.toggle('active', k === f);
+    });
+    renderAll();
+  }
+
+  function clearLogs() {
+    LOGS = [];
+    counts = { all:0, error:0, warn:0, log:0, network:0 };
+    if (logListEl) logListEl.innerHTML = '';
+    updateBadge();
+  }
+
+  function updateBadge() {
+    if (!badgeEl) return;
+    var n = (counts.error||0) + (counts.network||0);
+    if (n > 0) {
+      badgeEl.textContent = n > 99 ? '99+' : String(n);
+      badgeEl.classList.add('show');
+    } else {
+      badgeEl.classList.remove('show');
+    }
+  }
+
+  function togglePanel() {
+    panelOpen = !panelOpen;
+    if (!panel) { buildUI(); }
+    panel.classList.toggle('open', panelOpen);
+    if (panelOpen) {
+      renderAll();
+      // Ajuster position FAB si panel ouvert
+      if (fab) fab.style.bottom = (Math.min(420, window.innerHeight * 0.6) + 10) + 'px';
+    } else {
+      if (fab) fab.style.bottom = '70px';
+    }
+  }
+
+  /* Construire l'UI dès que le DOM est prêt */
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', buildUI);
+  } else {
+    setTimeout(buildUI, 0);
+  }
+
+  addLog('info', '[KykyProxy] Log viewer actif — cible : ${targetOrigin}');
+})();
+</script>`;
+}
+
+/* ─────────────────────────────────────
+   Script de réécriture dynamique injecté dans chaque HTML
 ───────────────────────────────────────*/
 function buildInjectedScript(targetOrigin) {
   return `<script data-kyky="1">
@@ -134,7 +451,7 @@ function buildInjectedScript(targetOrigin) {
   function wrap(url){
     if(!url||typeof url!=='string') return url;
     var u=url.trim();
-    if(!u||u==='#'||/^(data:|blob:|javascript:|mailto:|about:)/.test(u)) return url;
+    if(!u||u==='#'||/^(data:|blob:|javascript:|mailto:|about:|tel:)/.test(u)) return url;
     if(u.indexOf(PO)===0) return url;
     try{
       var abs=new URL(u,BASE).href;
@@ -159,6 +476,12 @@ function buildInjectedScript(targetOrigin) {
     return _open.apply(this,a);
   };
 
+  /* dynamic import() */
+  try {
+    var _importOrig = Function.prototype.call.bind(Function.prototype.call,
+      Object.getPrototypeOf(async function(){}).constructor);
+  } catch(e){}
+
   /* history */
   function patchHistory(method){
     var orig=history[method].bind(history);
@@ -179,6 +502,12 @@ function buildInjectedScript(targetOrigin) {
   patchHistory('pushState');
   patchHistory('replaceState');
 
+  /* Worker */
+  var _Worker = window.Worker;
+  window.Worker = function(url, opts) {
+    return new _Worker(wrap(url), opts);
+  };
+
   /* createElement */
   var PROTO_MAP={
     script: [HTMLScriptElement.prototype,   ['src']],
@@ -186,6 +515,9 @@ function buildInjectedScript(targetOrigin) {
     link:   [HTMLLinkElement.prototype,     ['href']],
     iframe: [HTMLIFrameElement.prototype,   ['src']],
     source: [HTMLSourceElement.prototype,   ['src','srcset']],
+    video:  [HTMLVideoElement.prototype,    ['src','poster']],
+    audio:  [HTMLAudioElement.prototype,    ['src']],
+    input:  [HTMLInputElement.prototype,    ['src']],
   };
   function patchEl(el,tag){
     var entry=PROTO_MAP[(tag||'').toLowerCase()];
@@ -216,13 +548,36 @@ function buildInjectedScript(targetOrigin) {
     var el=_create(tag); patchEl(el,tag); return el;
   };
 
+  /* Patch setAttribute pour src/href dynamiques */
+  var _setAttribute = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function(name, value) {
+    var n = name.toLowerCase();
+    if((n==='src'||n==='href'||n==='action'||n==='poster')&&typeof value==='string'){
+      value = wrap(value);
+    }
+    return _setAttribute.call(this, name, value);
+  };
+
+  /* Patch style.backgroundImage etc */
+  var _setProperty = CSSStyleDeclaration.prototype.setProperty;
+  CSSStyleDeclaration.prototype.setProperty = function(prop, val, prio) {
+    if(typeof val==='string'&&val.indexOf('url(')!==-1){
+      val = val.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, function(_,q,u){
+        return 'url('+q+wrap(u)+q+')';
+      });
+    }
+    return _setProperty.call(this, prop, val, prio);
+  };
+
   /* MutationObserver */
   function patchNode(node){
     if(node.nodeType!==1) return;
     var tag=(node.tagName||'').toLowerCase();
     patchEl(node,tag);
     if(node.querySelectorAll)
-      node.querySelectorAll('img,link,script,iframe,source').forEach(function(c){patchEl(c,c.tagName.toLowerCase());});
+      node.querySelectorAll('img,link,script,iframe,source,video,audio').forEach(function(c){
+        patchEl(c,c.tagName.toLowerCase());
+      });
   }
   new MutationObserver(function(muts){
     muts.forEach(function(m){m.addedNodes.forEach(patchNode);});
@@ -246,7 +601,6 @@ function buildInjectedScript(targetOrigin) {
    Fonction proxy centrale
 ───────────────────────────────────────*/
 function fetchAndProxy(targetUrl, req, res) {
-  /* Si proxy désactivé → redirect direct vers la vraie URL */
   if (req.cookies['kyky_off'] === '1') {
     return res.redirect(302, targetUrl);
   }
@@ -259,7 +613,6 @@ function fetchAndProxy(targetUrl, req, res) {
     return res.status(400).send('URL invalide : ' + targetUrl);
   }
 
-  /* Cookie de contexte */
   res.setHeader('Set-Cookie', [
     `kyky_target=${encodeURIComponent(target.origin)}; Path=/; Max-Age=3600; SameSite=None; Secure`,
   ]);
@@ -286,7 +639,7 @@ function fetchAndProxy(targetUrl, req, res) {
       }
     }
 
-    /* Headers */
+    /* Headers — on retire les bloquants */
     const BLOCKED = new Set([
       'x-frame-options','content-security-policy',
       'content-security-policy-report-only','strict-transport-security',
@@ -297,6 +650,7 @@ function fetchAndProxy(targetUrl, req, res) {
       if (!BLOCKED.has(k.toLowerCase())) { try { res.setHeader(k, v); } catch {} }
     });
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
     res.status(proxyRes.statusCode);
 
     /* Décompression */
@@ -392,13 +746,13 @@ app.use((req, res) => {
 });
 
 /* ─────────────────────────────────────
-   Réécriture HTML
+   Réécriture HTML — version renforcée
 ───────────────────────────────────────*/
 const SKIP = /^(data:|javascript:|mailto:|tel:|#|blob:|about:)/i;
 
 function toProxyUrl(raw, base) {
   try {
-    if (!raw || SKIP.test(raw.trim())) return raw;
+    if (!raw || !raw.trim() || SKIP.test(raw.trim())) return raw;
     const abs = new URL(raw.trim(), base).toString();
     if (abs.startsWith(PROXY_ORIGIN)) return raw;
     return PROXY_ORIGIN + '/proxy?url=' + encodeURIComponent(abs);
@@ -406,9 +760,19 @@ function toProxyUrl(raw, base) {
 }
 
 function rewriteHtml(html, base, proxyOff) {
+  /* 0. Extraire <base href> si présent et l'utiliser comme base */
+  const baseTagMatch = html.match(/<base[^>]+href\s*=\s*['"]([^'"]+)['"]/i);
+  if (baseTagMatch) {
+    try { base = new URL(baseTagMatch[1], base); } catch {}
+    /* Supprimer le <base href> pour éviter qu'il interfère côté client */
+    html = html.replace(/<base[^>]*>/gi, '');
+  }
+
+  /* 1. Attributs standards : href, src, action */
   html = html.replace(/((?:href|src|action)\s*=\s*)(['"])(.*?)\2/gi,
     (_, a, q, v) => `${a}${q}${toProxyUrl(v, base)}${q}`);
 
+  /* 2. srcset */
   html = html.replace(/srcset\s*=\s*(['"])(.*?)\1/gi, (_, q, val) => {
     const rw = val.split(',').map(p => {
       const [u, ...r] = p.trim().split(/\s+/);
@@ -417,14 +781,46 @@ function rewriteHtml(html, base, proxyOff) {
     return `srcset=${q}${rw}${q}`;
   });
 
+  /* 3. Attributs lazy-loading / data attributes courants */
+  html = html.replace(
+    /((?:data-src|data-href|data-original|data-lazy|data-lazy-src|data-url|data-bg|data-background|poster)\s*=\s*)(['"])(.*?)\2/gi,
+    (_, a, q, v) => `${a}${q}${toProxyUrl(v, base)}${q}`
+  );
+
+  /* 4. Attribut background (tables, td legacy) */
+  html = html.replace(/(background\s*=\s*)(['"])(.*?)\2/gi,
+    (_, a, q, v) => `${a}${q}${toProxyUrl(v, base)}${q}`);
+
+  /* 5. url() dans les attributs style inline */
+  html = html.replace(/style\s*=\s*(['"])((?:[^"'\\]|\\.)*?)\1/gi, (_, q, style) => {
+    const rw = style.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi,
+      (m, sq, u) => `url(${sq}${toProxyUrl(u, base)}${sq})`);
+    return `style=${q}${rw}${q}`;
+  });
+
+  /* 6. Blocs <style>...</style> */
+  html = html.replace(/<style([^>]*)>([\s\S]*?)<\/style>/gi,
+    (_, attrs, css) => `<style${attrs}>${rewriteCss(css, base)}</style>`);
+
+  /* 7. url() hors attributs (ex: CSS inline dans HTML brut) */
   html = html.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi,
     (_, q, u) => `url(${q}${toProxyUrl(u, base)}${q})`);
 
+  /* 8. meta refresh */
   html = html.replace(/(content\s*=\s*['"][^'"]*?url=)([^'"&\s]+)/gi,
     (_, pre, u) => `${pre}${toProxyUrl(u, base)}`);
 
-  /* Injection script + toggle UI */
-  html = html.replace(/<head([^>]*)>/i, m => m + buildInjectedScript(base.origin));
+  /* 9. import() dynamique dans les scripts inline */
+  html = html.replace(/<script([^>]*)>([\s\S]*?)<\/script>/gi, (whole, attrs, code) => {
+    if (/data-kyky/.test(attrs)) return whole; // ne pas toucher nos scripts
+    const rw = rewriteJs(code, base);
+    return `<script${attrs}>${rw}</script>`;
+  });
+
+  /* 10. Injection log viewer (avant tout) + script proxy + toggle UI */
+  html = html.replace(/<head([^>]*)>/i, m =>
+    m + buildLogViewerScript(base.origin) + buildInjectedScript(base.origin)
+  );
   html = html.replace(/<\/body>/i, buildToggleUI(proxyOff) + '</body>');
 
   return html;
@@ -434,15 +830,27 @@ function rewriteHtml(html, base, proxyOff) {
    Réécriture JS
 ───────────────────────────────────────*/
 function rewriteJs(js, base) {
+  /* URLs absolues du domaine cible dans les strings */
   js = js.replace(
     new RegExp(`(['"\`])(https?://${escRx(base.hostname)}[^'"\`\\\\]*)\\1`, 'g'),
     (_, q, url) => `${q}${PROXY_ORIGIN}/proxy?url=${encodeURIComponent(url)}${q}`
   );
+  /* Webpack public path */
   js = js.replace(
     /(__webpack_require__\s*\.\s*p\s*=\s*)(['"`])(https?:\/\/[^'"`]+|\/[^'"`]*)(['"`])/g,
     (_, pre, q, path, q2) => {
       const abs = path.startsWith('http') ? path : base.origin + path;
       return `${pre}${q}${PROXY_ORIGIN}/proxy?url=${encodeURIComponent(abs)}${q2}`;
+    }
+  );
+  /* import() dynamique avec string littérale */
+  js = js.replace(
+    /\bimport\s*\(\s*(['"`])([^'"`]+)\1\s*\)/g,
+    (_, q, url) => {
+      try {
+        const abs = new URL(url, base).toString();
+        return `import(${q}${PROXY_ORIGIN}/proxy?url=${encodeURIComponent(abs)}${q})`;
+      } catch { return _; }
     }
   );
   return js;
@@ -456,6 +864,8 @@ function rewriteCss(css, base) {
     (_, q, u) => `url(${q}${toProxyUrl(u, base)}${q})`);
   css = css.replace(/@import\s+(['"])(.*?)\1/gi,
     (_, q, u) => `@import ${q}${toProxyUrl(u, base)}${q}`);
+  css = css.replace(/@import\s+url\(\s*(['"]?)(.*?)\1\s*\)/gi,
+    (_, q, u) => `@import url(${q}${toProxyUrl(u, base)}${q})`);
   return css;
 }
 
