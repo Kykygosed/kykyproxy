@@ -60,8 +60,22 @@ app.get('/kyky-toggle', (req, res) => {
 /* ─────────────────────────────────────
    Headers réalistes — anti-Cloudflare / anti-bot
 ───────────────────────────────────────*/
+/* Cookies internes du proxy — à ne pas transmettre au site cible */
+const PROXY_COOKIE_KEYS = new Set(['kyky_off', 'kyky_target']);
+
 function buildHeaders(target, reqHeaders) {
-  return {
+  /* Extraire uniquement les cookies destinés au site cible (pas les cookies kyky_*) */
+  const rawCookie = reqHeaders['cookie'] || '';
+  const forwardedCookies = rawCookie
+    .split(';')
+    .map(c => c.trim())
+    .filter(c => {
+      const key = c.split('=')[0].trim();
+      return key && !PROXY_COOKIE_KEYS.has(key);
+    })
+    .join('; ');
+
+  const headers = {
     'Host'                    : target.hostname,
     'User-Agent'              : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept'                  : reqHeaders['accept'] || 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -81,6 +95,18 @@ function buildHeaders(target, reqHeaders) {
     'Cache-Control'           : 'max-age=0',
     'DNT'                     : '1',
   };
+
+  /* Transmettre les cookies de session au site cible */
+  if (forwardedCookies) headers['Cookie'] = forwardedCookies;
+
+  /* Transmettre les headers CSRF/token spécifiques (Instagram, etc.) */
+  const passthroughHeaders = ['x-csrftoken', 'x-ig-app-id', 'x-ig-www-claim',
+    'x-requested-with', 'x-asbd-id', 'x-fb-friendly-name'];
+  for (const h of passthroughHeaders) {
+    if (reqHeaders[h]) headers[h] = reqHeaders[h];
+  }
+
+  return headers;
 }
 
 /* ─────────────────────────────────────
@@ -660,6 +686,15 @@ function fetchAndProxy(targetUrl, req, res) {
     const isJs   = contentType.includes('javascript');
     const isCss  = contentType.includes('text/css');
 
+    /* Ne pas réécrire le HTML si la requête ressemble à un appel API
+       (le site renvoie une page d'erreur HTML au lieu de JSON) */
+    const reqAccept = (req.headers['accept'] || '').toLowerCase();
+    const isApiRequest = reqAccept.includes('application/json') ||
+                         reqAccept.includes('application/x-www-form-urlencoded') ||
+                         req.headers['x-requested-with'] === 'XMLHttpRequest' ||
+                         /\/ajax\/|\/api\/|\/graphql|\/oidc\//.test(target.pathname);
+    const treatAsHtml = isHtml && !isApiRequest;
+
     let stream = proxyRes;
     if      (encoding === 'gzip')    stream = proxyRes.pipe(zlib.createGunzip());
     else if (encoding === 'deflate') stream = proxyRes.pipe(zlib.createInflate());
@@ -670,12 +705,12 @@ function fetchAndProxy(targetUrl, req, res) {
       if (!res.headersSent) res.status(502).end();
     }
 
-    if (isHtml || isJs || isCss) {
+    if (treatAsHtml || isJs || isCss) {
       const chunks = [];
       stream.on('data', c => chunks.push(c));
       stream.on('end', () => {
         let text = Buffer.concat(chunks).toString('utf-8');
-        if (isHtml) {
+        if (treatAsHtml) {
           text = rewriteHtml(text, target, req.cookies['kyky_off']);
           res.setHeader('content-type', 'text/html; charset=utf-8');
         } else if (isJs) {
