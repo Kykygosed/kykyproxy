@@ -558,16 +558,16 @@ function buildInjectedScript(targetOrigin) {
     return _setAttribute.call(this, name, value);
   };
 
-  /* Patch style.backgroundImage etc */
-  var _setProperty = CSSStyleDeclaration.prototype.setProperty;
-  CSSStyleDeclaration.prototype.setProperty = function(prop, val, prio) {
-    if(typeof val==='string'&&val.indexOf('url(')!==-1){
-      val = val.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, function(_,q,u){
-        return 'url('+q+wrap(u)+q+')';
-      });
-    }
-    return _setProperty.call(this, prop, val, prio);
-  };
+/* Patch style.backgroundImage etc */
+var _setProperty = CSSStyleDeclaration.prototype.setProperty;
+CSSStyleDeclaration.prototype.setProperty = function(prop, val, prio) {
+  if (typeof val === 'string' && val.indexOf('url(') !== -1) {
+    val = val.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, function(_, q, u) {
+      return 'url(' + q + wrap(u) + q + ')';
+    });
+  }
+  return _setProperty.call(this, prop, val, prio);
+};
 
   /* MutationObserver */
   function patchNode(node){
