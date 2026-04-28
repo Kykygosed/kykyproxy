@@ -1,9 +1,16 @@
 const express      = require('express');
-const https        = require('https'); 
+const https        = require('https');
 const http         = require('http');
 const zlib         = require('zlib');
 const { URL }      = require('url');
-const cookieParser = require('cookie-parser');
+/* Parse cookies sans dépendance externe */
+function parseCookies(req) {
+  const raw = req.headers['cookie'] || '';
+  return Object.fromEntries(raw.split(';').map(c => {
+    const [k, ...v] = c.trim().split('=');
+    return [k, decodeURIComponent(v.join('='))];
+  }).filter(([k]) => k));
+}
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -13,8 +20,8 @@ const FRONTEND_URL   = (process.env.FRONTEND_URL  || 'https://kykysearch.netlify
 /* ─────────────────────────────────────
    Middlewares
 ───────────────────────────────────────*/
-app.use(cookieParser());
 app.use((req, res, next) => {
+  req.cookies = parseCookies(req);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', '*');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
