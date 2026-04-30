@@ -25,8 +25,19 @@ app.use((req, res, next) => {
   req.cookies = parseCookies(req);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
+});
+
+/* Collecte le body brut pour le forward POST/PUT/PATCH */
+app.use((req, res, next) => {
+  const chunks = [];
+  req.on('data', c => chunks.push(c));
+  req.on('end', () => {
+    req.rawBody = chunks.length ? Buffer.concat(chunks) : null;
+    next();
+  });
 });
 
 /* ─────────────────────────────────────
@@ -643,14 +654,23 @@ function fetchAndProxy(targetUrl, req, res) {
     `kyky_target=${encodeURIComponent(target.origin)}; Path=/; Max-Age=3600; SameSite=None; Secure`,
   ]);
 
+  const method  = req.method;
   const driver  = target.protocol === 'https:' ? https : http;
   const options = {
     hostname : target.hostname,
     port     : target.port || (target.protocol === 'https:' ? 443 : 80),
     path     : target.pathname + target.search,
-    method   : 'GET',
+    method   : method,
     headers  : buildHeaders(target, req.headers),
   };
+
+  /* Forward du body pour POST / PUT / PATCH */
+  if (req.rawBody && req.rawBody.length > 0) {
+    options.headers['content-length'] = req.rawBody.length;
+    if (req.headers['content-type']) {
+      options.headers['content-type'] = req.headers['content-type'];
+    }
+  }
 
   const proxyReq = driver.request(options, (proxyRes) => {
 
@@ -737,13 +757,18 @@ function fetchAndProxy(targetUrl, req, res) {
     console.error('[proxy] erreur:', err.message);
     if (!res.headersSent) res.status(502).send('Site indisponible.');
   });
+
+  /* Envoyer le body si présent (POST / PUT / PATCH) */
+  if (req.rawBody && req.rawBody.length > 0) {
+    proxyReq.write(req.rawBody);
+  }
   proxyReq.end();
 }
 
 /* ─────────────────────────────────────
    Route /proxy?url=
 ───────────────────────────────────────*/
-app.get('/proxy', (req, res) => {
+app.all('/proxy', (req, res) => {
   const raw = req.query.url;
   if (!raw) return res.redirect(302, FRONTEND_URL);
   fetchAndProxy(raw, req, res);
@@ -795,7 +820,11 @@ function toProxyUrl(raw, base) {
 }
 
 function rewriteHtml(html, base, proxyOff) {
-  /* 0. Extraire <base href> si présent et l'utiliser comme base */
+  /* 0. Supprimer les attributs integrity (SRI) — évite les erreurs de hash après réécriture */
+  html = html.replace(/\s+integrity\s*=\s*(['"])[^'"]*\1/gi, '');
+  html = html.replace(/\s+crossorigin\s*=\s*(['"])[^'"]*\1/gi, '');
+
+  /* 0b. Extraire <base href> si présent et l'utiliser comme base */
   const baseTagMatch = html.match(/<base[^>]+href\s*=\s*['"]([^'"]+)['"]/i);
   if (baseTagMatch) {
     try { base = new URL(baseTagMatch[1], base); } catch {}
