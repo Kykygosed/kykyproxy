@@ -725,22 +725,46 @@ function fetchAndProxy(targetUrl, req, res) {
       if (!res.headersSent) res.status(502).end();
     }
 
-    if (treatAsHtml || isJs || isCss) {
+    if (treatAsHtml) {
+      /* Buffer uniquement le HTML (nécessite réécriture) */
       const chunks = [];
       stream.on('data', c => chunks.push(c));
       stream.on('end', () => {
         let text = Buffer.concat(chunks).toString('utf-8');
-        if (treatAsHtml) {
-          text = rewriteHtml(text, target, req.cookies['kyky_off']);
-          res.setHeader('content-type', 'text/html; charset=utf-8');
-        } else if (isJs) {
-          text = rewriteJs(text, target);
-          res.setHeader('content-type', 'application/javascript; charset=utf-8');
-        } else if (isCss) {
-          text = rewriteCss(text, target);
-          res.setHeader('content-type', 'text/css; charset=utf-8');
-        }
+        text = rewriteHtml(text, target, req.cookies['kyky_off']);
+        res.setHeader('content-type', 'text/html; charset=utf-8');
         res.end(text);
+      });
+      stream.on('error', onError);
+    } else if (isJs || isCss) {
+      /* JS et CSS : buffer pour réécriture mais on limite la taille */
+      const chunks = [];
+      let totalSize = 0;
+      const MAX_REWRITE_SIZE = 5 * 1024 * 1024; // 5 MB max, au-delà on pipe direct
+      stream.on('data', c => {
+        totalSize += c.length;
+        if (totalSize > MAX_REWRITE_SIZE) {
+          /* Trop gros : on pipe le reste directement sans réécrire */
+          stream.removeAllListeners('data');
+          stream.removeAllListeners('end');
+          res.write(Buffer.concat(chunks));
+          stream.pipe(res);
+        } else {
+          chunks.push(c);
+        }
+      });
+      stream.on('end', () => {
+        if (totalSize <= MAX_REWRITE_SIZE) {
+          let text = Buffer.concat(chunks).toString('utf-8');
+          if (isJs) {
+            text = rewriteJs(text, target);
+            res.setHeader('content-type', 'application/javascript; charset=utf-8');
+          } else {
+            text = rewriteCss(text, target);
+            res.setHeader('content-type', 'text/css; charset=utf-8');
+          }
+          res.end(text);
+        }
       });
       stream.on('error', onError);
     } else {
@@ -749,7 +773,7 @@ function fetchAndProxy(targetUrl, req, res) {
     }
   });
 
-  proxyReq.setTimeout(20000, () => {
+  proxyReq.setTimeout(10000, () => {
     proxyReq.destroy();
     if (!res.headersSent) res.status(504).send('Délai dépassé.');
   });
@@ -796,9 +820,13 @@ app.use((req, res) => {
   }
 
   if (baseOrigin) {
-    const qs = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-    const targetUrl = baseOrigin + req.path + qs;
-    console.log('[catch-all]', req.path, '→', targetUrl);
+    let targetUrl;
+    try {
+      targetUrl = new URL(req.originalUrl, baseOrigin).toString();
+    } catch {
+      targetUrl = baseOrigin + req.originalUrl;
+    }
+    console.log('[catch-all]', req.originalUrl, '→', targetUrl);
     return fetchAndProxy(targetUrl, req, res);
   }
 
@@ -914,7 +942,7 @@ function rewriteJs(js, base) {
       try {
         const abs = new URL(url, base).toString();
         return `import(${q}${PROXY_ORIGIN}/proxy?url=${encodeURIComponent(abs)}${q})`;
-      } catch { return _; }
+      } catch { return url; }
     }
   );
   return js;
@@ -938,6 +966,13 @@ function escRx(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 /* ─────────────────────────────────────
    Démarrage
 ───────────────────────────────────────*/
+process.on('uncaughtException', err => {
+  console.error('[UNCAUGHT EXCEPTION]', err.stack || err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+});
+
 app.listen(PORT, () => {
   console.log(`KykyProxy en écoute sur le port ${PORT}`);
   console.log(`  Frontend : ${FRONTEND_URL}`);
