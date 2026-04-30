@@ -93,18 +93,18 @@ function buildHeaders(target, reqHeaders) {
     'Accept-Language'         : 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
     'Accept-Encoding'         : 'gzip, deflate, br',
     'Referer'                 : target.origin + '/',
-    'Origin'                  : target.origin,
     'Connection'              : 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest'          : reqHeaders['sec-fetch-dest']  || 'document',
     'Sec-Fetch-Mode'          : reqHeaders['sec-fetch-mode']  || 'navigate',
-    'Sec-Fetch-Site'          : 'none',
+    'Sec-Fetch-Site'          : 'same-origin',
     'Sec-Fetch-User'          : '?1',
     'Sec-CH-UA'               : '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
     'Sec-CH-UA-Mobile'        : '?0',
     'Sec-CH-UA-Platform'      : '"Windows"',
     'Cache-Control'           : 'max-age=0',
     'DNT'                     : '1',
+    // Origin volontairement absent : le transmettre trahit l'origine proxy
   };
 
   /* Transmettre les cookies de session au site cible */
@@ -673,6 +673,18 @@ function fetchAndProxy(targetUrl, req, res) {
   }
 
   const proxyReq = driver.request(options, (proxyRes) => {
+
+    /* Assets bloqués / introuvables — on répond 204 pour ne pas casser la page */
+    if ([400, 404, 410].includes(proxyRes.statusCode)) {
+      const ct = (proxyRes.headers['content-type'] || '').toLowerCase();
+      const isAsset = ct.includes('javascript') || ct.includes('css') ||
+                      ct.includes('image') || ct.includes('font') ||
+                      ct.includes('woff') || ct.includes('octet-stream');
+      if (isAsset) {
+        console.log('[blocked asset]', proxyRes.statusCode, targetUrl);
+        return res.status(204).end();
+      }
+    }
 
     /* Redirections */
     const loc = proxyRes.headers['location'];
