@@ -674,13 +674,22 @@ function fetchAndProxy(targetUrl, req, res) {
 
   const proxyReq = driver.request(options, (proxyRes) => {
 
-    /* Assets bloqués / introuvables — on répond 204 pour ne pas casser la page */
+    /* ─────────────────────────────────────────────────────────────
+       FIX 1 : Assets introuvables → 204 silencieux UNIQUEMENT pour
+       les assets non-critiques (images, fonts, binaires).
+       Le CSS et le JS sont laissés passer pour ne pas casser le
+       lecteur vidéo (player CSS/JS manquant = vidéo invisible).
+    ─────────────────────────────────────────────────────────────── */
     if ([400, 404, 410].includes(proxyRes.statusCode)) {
       const ct = (proxyRes.headers['content-type'] || '').toLowerCase();
-      const isAsset = ct.includes('javascript') || ct.includes('css') ||
-                      ct.includes('image') || ct.includes('font') ||
-                      ct.includes('woff') || ct.includes('octet-stream');
-      if (isAsset) {
+      const isNonCriticalAsset =
+        ct.includes('image') ||
+        ct.includes('font')  ||
+        ct.includes('woff')  ||
+        ct.includes('octet-stream');
+      // ⚠️ CSS et JS exclus intentionnellement : une erreur réelle sur
+      // ces ressources doit remonter au navigateur pour debug.
+      if (isNonCriticalAsset) {
         console.log('[blocked asset]', proxyRes.statusCode, targetUrl);
         return res.status(204).end();
       }
@@ -914,12 +923,23 @@ function rewriteHtml(html, base, proxyOff) {
   html = html.replace(/(content\s*=\s*['"][^'"]*?url=)([^'"&\s]+)/gi,
     (_, pre, u) => `${pre}${toProxyUrl(u, base)}`);
 
-  /* 9. import() dynamique dans les scripts inline */
-  html = html.replace(/<script([^>]*)>([\s\S]*?)<\/script>/gi, (whole, attrs, code) => {
-    if (/data-kyky/.test(attrs)) return whole; // ne pas toucher nos scripts
-    const rw = rewriteJs(code, base);
-    return `<script${attrs}>${rw}</script>`;
-  });
+  /* ─────────────────────────────────────────────────────────────────
+     FIX 2 : Étape 9 supprimée — ne plus appeler rewriteJs() sur les
+     scripts inline du HTML.
+
+     Pourquoi : les lecteurs vidéo (HLS.js, JWPlayer, MGP Player…)
+     sont des bundles minifiés denses. La regex de rewriteJs() peut
+     confondre des patterns JS légaux (destructuring, labels, ternaires
+     contenant `:`) avec des chaînes d'URL, les corrompre et provoquer
+     exactement les SyntaxError observées :
+       "Unexpected token ':'. Expected a ')' or a ','..."
+
+     Le script injecté (buildInjectedScript) intercepte déjà à runtime
+     fetch, XHR, createElement, setAttribute et Worker — ce qui couvre
+     la totalité des cas de chargement dynamique des segments vidéo
+     (.m3u8, .ts, .mp4). La réécriture statique des scripts inline
+     est donc redondante ET dangereuse.
+  ─────────────────────────────────────────────────────────────────── */
 
   /* 10. Injection log viewer (avant tout) + script proxy + toggle UI */
   html = html.replace(/<head([^>]*)>/i, m =>
@@ -931,7 +951,8 @@ function rewriteHtml(html, base, proxyOff) {
 }
 
 /* ─────────────────────────────────────
-   Réécriture JS
+   Réécriture JS (fichiers .js externes uniquement)
+   ⚠️  N'est plus appelée sur les scripts inline du HTML (voir FIX 2).
 ───────────────────────────────────────*/
 function rewriteJs(js, base) {
   /* URLs absolues du domaine cible dans les strings */
