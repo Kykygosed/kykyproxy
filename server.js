@@ -117,10 +117,10 @@ function buildHeaders(target, reqHeaders) {
     if (reqHeaders[h]) headers[h] = reqHeaders[h];
   }
 
-  /* Forward Range header — indispensable pour le streaming vidéo sur Safari.
-     Sans ça, Safari ne peut pas faire de requêtes partielles (seek, buffer)
-     et la connexion est perdue dès que la vidéo tente de se charger. */
-  if (reqHeaders['range']) headers['Range'] = reqHeaders['range'];
+  /* Forward Range + headers de streaming — indispensable pour seek/pause sur Safari. */
+  if (reqHeaders['range'])         headers['Range']           = reqHeaders['range'];
+  if (reqHeaders['if-range'])      headers['If-Range']        = reqHeaders['if-range'];
+  if (reqHeaders['if-none-match']) headers['If-None-Match']   = reqHeaders['if-none-match'];
 
   return headers;
 }
@@ -746,18 +746,29 @@ function fetchAndProxy(targetUrl, req, res) {
       }
     }
 
-    /* Headers — on retire les bloquants */
-    const BLOCKED = new Set([
+    /* Headers — on retire les bloquants.
+       IMPORTANT : content-length et content-range sont conservés pour
+       les contenus vidéo/binaires (nécessaires pour seek + pause/resume).
+       On les retire uniquement pour HTML/CSS/JS qu'on réécrit (taille change). */
+    const ALWAYS_BLOCKED = new Set([
       'x-frame-options','content-security-policy',
       'content-security-policy-report-only','strict-transport-security',
       'x-content-type-options','transfer-encoding',
-      'content-encoding','content-length','set-cookie',
+      'content-encoding','set-cookie',
     ]);
+    const ct0 = (proxyRes.headers['content-type'] || '').toLowerCase();
+    const isRewritten = ct0.includes('text/html') || ct0.includes('javascript') ||
+                        ct0.includes('text/css');
     Object.entries(proxyRes.headers).forEach(([k, v]) => {
-      if (!BLOCKED.has(k.toLowerCase())) { try { res.setHeader(k, v); } catch {} }
+      const kl = k.toLowerCase();
+      if (ALWAYS_BLOCKED.has(kl)) return;
+      // Bloquer content-length seulement si on va réécrire le contenu
+      if (kl === 'content-length' && isRewritten) return;
+      try { res.setHeader(k, v); } catch {}
     });
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
     res.status(proxyRes.statusCode);
 
     /* Décompression */
@@ -855,8 +866,9 @@ function fetchAndProxy(targetUrl, req, res) {
     target.pathname.includes('/hls/') ||
     target.pathname.includes('/dash/') ||
     target.pathname.includes('/seg') ||
-    target.pathname.includes('/chunk');
-  const reqTimeout = isVideoRequest ? 60000 : 15000;
+    target.pathname.includes('/chunk') ||
+    (req.headers['range'] !== undefined); // toute requête Range = streaming
+  const reqTimeout = isVideoRequest ? 120000 : 15000; // 2min pour vidéo
 
   proxyReq.setTimeout(reqTimeout, () => {
     proxyReq.destroy();
