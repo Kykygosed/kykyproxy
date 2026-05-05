@@ -117,10 +117,10 @@ function buildHeaders(target, reqHeaders) {
     if (reqHeaders[h]) headers[h] = reqHeaders[h];
   }
 
-  /* Forward Range + headers de streaming — indispensable pour seek/pause sur Safari. */
-  if (reqHeaders['range'])         headers['Range']           = reqHeaders['range'];
-  if (reqHeaders['if-range'])      headers['If-Range']        = reqHeaders['if-range'];
-  if (reqHeaders['if-none-match']) headers['If-None-Match']   = reqHeaders['if-none-match'];
+  /* Forward Range header — indispensable pour le streaming vidéo sur Safari.
+     Sans ça, Safari ne peut pas faire de requêtes partielles (seek, buffer)
+     et la connexion est perdue dès que la vidéo tente de se charger. */
+  if (reqHeaders['range']) headers['Range'] = reqHeaders['range'];
 
   return headers;
 }
@@ -228,14 +228,8 @@ function buildLogViewerScript(targetOrigin) {
     window.fetch = function(input, init) {
       var url = typeof input === 'string' ? input : (input && input.url ? input.url : String(input));
       var shortUrl = url.replace(/.*proxy\\?url=/, '').slice(0, 120);
-      var isVideo = /\.(m3u8|ts|mp4|m4s|fmp4|aac)(\?|$)/i.test(url);
-      var isProxied = url.indexOf('proxy?url=') !== -1 || url.indexOf('/proxy?') !== -1;
-      if (isVideo) {
-        addLog('info', '[VIDEO-FETCH ' + (isProxied ? 'PROXY' : 'DIRECT!') + '] ' + shortUrl);
-      }
       return _fetch(input, init).then(function(res) {
         if (!res.ok) addLog('network', '[' + res.status + '] ' + shortUrl);
-        else if (isVideo) addLog('info', '[VIDEO-OK ' + res.status + '] ' + shortUrl);
         return res;
       }, function(err) {
         addLog('network', '[FAILED] ' + shortUrl + ' — ' + err.message);
@@ -253,14 +247,8 @@ function buildLogViewerScript(targetOrigin) {
   };
   XMLHttpRequest.prototype.send = function() {
     var self = this;
-    var isVideo = /\.(m3u8|ts|mp4|m4s|fmp4|aac)(\?|$)/i.test(self._kykyUrl||'');
-    var isProxied = (self._kykyUrl||'').indexOf('proxy?url=') !== -1;
-    if (isVideo) {
-      addLog('info', '[VIDEO-XHR ' + (isProxied ? 'PROXY' : 'DIRECT!') + '] ' + (self._kykyUrl||'?'));
-    }
     this.addEventListener('load', function() {
       if (self.status >= 400) addLog('network', '[' + self.status + '] XHR ' + (self._kykyUrl||'?'));
-      else if (isVideo) addLog('info', '[VIDEO-XHR-OK ' + self.status + '] ' + (self._kykyUrl||'?'));
     });
     this.addEventListener('error', function() {
       addLog('network', '[FAILED] XHR ' + (self._kykyUrl||'?'));
@@ -758,29 +746,18 @@ function fetchAndProxy(targetUrl, req, res) {
       }
     }
 
-    /* Headers — on retire les bloquants.
-       IMPORTANT : content-length et content-range sont conservés pour
-       les contenus vidéo/binaires (nécessaires pour seek + pause/resume).
-       On les retire uniquement pour HTML/CSS/JS qu'on réécrit (taille change). */
-    const ALWAYS_BLOCKED = new Set([
+    /* Headers — on retire les bloquants */
+    const BLOCKED = new Set([
       'x-frame-options','content-security-policy',
       'content-security-policy-report-only','strict-transport-security',
       'x-content-type-options','transfer-encoding',
-      'content-encoding','set-cookie',
+      'content-encoding','content-length','set-cookie',
     ]);
-    const ct0 = (proxyRes.headers['content-type'] || '').toLowerCase();
-    const isRewritten = ct0.includes('text/html') || ct0.includes('javascript') ||
-                        ct0.includes('text/css');
     Object.entries(proxyRes.headers).forEach(([k, v]) => {
-      const kl = k.toLowerCase();
-      if (ALWAYS_BLOCKED.has(kl)) return;
-      // Bloquer content-length seulement si on va réécrire le contenu
-      if (kl === 'content-length' && isRewritten) return;
-      try { res.setHeader(k, v); } catch {}
+      if (!BLOCKED.has(k.toLowerCase())) { try { res.setHeader(k, v); } catch {} }
     });
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
     res.status(proxyRes.statusCode);
 
     /* Décompression */
@@ -878,9 +855,8 @@ function fetchAndProxy(targetUrl, req, res) {
     target.pathname.includes('/hls/') ||
     target.pathname.includes('/dash/') ||
     target.pathname.includes('/seg') ||
-    target.pathname.includes('/chunk') ||
-    (req.headers['range'] !== undefined); // toute requête Range = streaming
-  const reqTimeout = isVideoRequest ? 120000 : 15000; // 2min pour vidéo
+    target.pathname.includes('/chunk');
+  const reqTimeout = isVideoRequest ? 60000 : 15000;
 
   proxyReq.setTimeout(reqTimeout, () => {
     proxyReq.destroy();
