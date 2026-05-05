@@ -117,6 +117,11 @@ function buildHeaders(target, reqHeaders) {
     if (reqHeaders[h]) headers[h] = reqHeaders[h];
   }
 
+  /* Forward Range header — indispensable pour le streaming vidéo sur Safari.
+     Sans ça, Safari ne peut pas faire de requêtes partielles (seek, buffer)
+     et la connexion est perdue dès que la vidéo tente de se charger. */
+  if (reqHeaders['range']) headers['Range'] = reqHeaders['range'];
+
   return headers;
 }
 
@@ -809,13 +814,35 @@ function fetchAndProxy(targetUrl, req, res) {
       stream.on('error', onError);
     } else {
       /* JS et tout le reste : pipe direct SANS réécriture.
-         Le script runtime intercepte fetch/XHR/createElement dynamiquement. */
+         Le script runtime intercepte fetch/XHR/createElement dynamiquement.
+         Pour les segments vidéo (.ts, .mp4...) on s'assure que les headers
+         de range/streaming passent bien pour éviter "connexion perdue". */
+      const ct2 = contentType || '';
+      if (
+        ct2.includes('video') || ct2.includes('audio') ||
+        ct2.includes('octet-stream') ||
+        /\.(ts|mp4|webm|m4s|aac|fmp4)(\?|$)/i.test(target.pathname)
+      ) {
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'no-cache');
+      }
       stream.pipe(res);
       stream.on('error', onError);
     }
   });
 
-  proxyReq.setTimeout(10000, () => {
+  /* Timeout adaptatif : vidéo/media = 60s, reste = 15s
+     Le timeout de 10s tuait les segments vidéo (.ts/.mp4/.m3u8)
+     qui prennent plus longtemps à transférer. */
+  const isVideoRequest =
+    /\.(m3u8|ts|mp4|webm|m4s|aac|fmp4)(\?|$)/i.test(target.pathname) ||
+    target.pathname.includes('/hls/') ||
+    target.pathname.includes('/dash/') ||
+    target.pathname.includes('/seg') ||
+    target.pathname.includes('/chunk');
+  const reqTimeout = isVideoRequest ? 60000 : 15000;
+
+  proxyReq.setTimeout(reqTimeout, () => {
     proxyReq.destroy();
     if (!res.headersSent) res.status(504).send('Délai dépassé.');
   });
