@@ -757,38 +757,24 @@ function fetchAndProxy(targetUrl, req, res) {
         res.end(text);
       });
       stream.on('error', onError);
-    } else if (isJs || isCss) {
-      /* JS et CSS : buffer pour réécriture mais on limite la taille */
+    } else if (isCss) {
+      /* CSS uniquement : réécriture des url() pour proxifier fonts/images */
       const chunks = [];
-      let totalSize = 0;
-      const MAX_REWRITE_SIZE = 5 * 1024 * 1024; // 5 MB max, au-delà on pipe direct
-      stream.on('data', c => {
-        totalSize += c.length;
-        if (totalSize > MAX_REWRITE_SIZE) {
-          /* Trop gros : on pipe le reste directement sans réécrire */
-          stream.removeAllListeners('data');
-          stream.removeAllListeners('end');
-          res.write(Buffer.concat(chunks));
-          stream.pipe(res);
-        } else {
-          chunks.push(c);
-        }
-      });
+      stream.on('data', c => chunks.push(c));
       stream.on('end', () => {
-        if (totalSize <= MAX_REWRITE_SIZE) {
-          let text = Buffer.concat(chunks).toString('utf-8');
-          if (isJs) {
-            text = rewriteJs(text, target);
-            res.setHeader('content-type', 'application/javascript; charset=utf-8');
-          } else {
-            text = rewriteCss(text, target);
-            res.setHeader('content-type', 'text/css; charset=utf-8');
-          }
-          res.end(text);
-        }
+        let text = Buffer.concat(chunks).toString('utf-8');
+        text = rewriteCss(text, target);
+        res.setHeader('content-type', 'text/css; charset=utf-8');
+        res.end(text);
       });
       stream.on('error', onError);
     } else {
+      /* JS et tout le reste : pipe direct SANS réécriture.
+         Le script runtime injecté dans le HTML (buildInjectedScript)
+         intercepte fetch / XHR / createElement à l'exécution et
+         proxifie les URLs dynamiquement — réécrire le JS statiquement
+         avec des regex est dangereux sur les bundles minifiés et
+         provoque des SyntaxError (token ':', numeric literal…). */
       stream.pipe(res);
       stream.on('error', onError);
     }
