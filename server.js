@@ -228,8 +228,14 @@ function buildLogViewerScript(targetOrigin) {
     window.fetch = function(input, init) {
       var url = typeof input === 'string' ? input : (input && input.url ? input.url : String(input));
       var shortUrl = url.replace(/.*proxy\\?url=/, '').slice(0, 120);
+      var isVideo = /\.(m3u8|ts|mp4|m4s|fmp4|aac)(\?|$)/i.test(url);
+      var isProxied = url.indexOf('proxy?url=') !== -1 || url.indexOf('/proxy?') !== -1;
+      if (isVideo) {
+        addLog('info', '[VIDEO-FETCH ' + (isProxied ? 'PROXY' : 'DIRECT!') + '] ' + shortUrl);
+      }
       return _fetch(input, init).then(function(res) {
         if (!res.ok) addLog('network', '[' + res.status + '] ' + shortUrl);
+        else if (isVideo) addLog('info', '[VIDEO-OK ' + res.status + '] ' + shortUrl);
         return res;
       }, function(err) {
         addLog('network', '[FAILED] ' + shortUrl + ' — ' + err.message);
@@ -247,8 +253,14 @@ function buildLogViewerScript(targetOrigin) {
   };
   XMLHttpRequest.prototype.send = function() {
     var self = this;
+    var isVideo = /\.(m3u8|ts|mp4|m4s|fmp4|aac)(\?|$)/i.test(self._kykyUrl||'');
+    var isProxied = (self._kykyUrl||'').indexOf('proxy?url=') !== -1;
+    if (isVideo) {
+      addLog('info', '[VIDEO-XHR ' + (isProxied ? 'PROXY' : 'DIRECT!') + '] ' + (self._kykyUrl||'?'));
+    }
     this.addEventListener('load', function() {
       if (self.status >= 400) addLog('network', '[' + self.status + '] XHR ' + (self._kykyUrl||'?'));
+      else if (isVideo) addLog('info', '[VIDEO-XHR-OK ' + self.status + '] ' + (self._kykyUrl||'?'));
     });
     this.addEventListener('error', function() {
       addLog('network', '[FAILED] XHR ' + (self._kykyUrl||'?'));
