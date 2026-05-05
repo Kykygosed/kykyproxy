@@ -563,10 +563,26 @@ function buildInjectedScript(targetOrigin) {
   patchHistory('pushState');
   patchHistory('replaceState');
 
-  /* Worker */
+  /* Worker — on injecte notre patch fetch() dans le worker via un Blob.
+     Sans ça, HLS.js charge les segments .ts depuis le worker sans proxy
+     => CORS bloque => écran noir aléatoire (1 fois sur 5). */
   var _Worker = window.Worker;
   window.Worker = function(url, opts) {
-    return new _Worker(wrap(url), opts);
+    var wrappedUrl = wrap(url);
+    try {
+      // Créer un worker wrapper qui importe d'abord notre patch,
+      // puis le vrai script worker
+      var patchUrl = PO + '/kyky-worker-patch.js?origin=' + encodeURIComponent(BASE);
+      var blob = new Blob([
+        'try{importScripts(' + JSON.stringify(patchUrl) + ');}catch(e){}\n' +
+        'importScripts(' + JSON.stringify(wrappedUrl) + ');'
+      ], { type: 'application/javascript' });
+      var blobUrl = URL.createObjectURL(blob);
+      return new _Worker(blobUrl, opts);
+    } catch(e) {
+      // Fallback : worker direct si le blob échoue
+      return new _Worker(wrappedUrl, opts);
+    }
   };
 
   /* createElement */
@@ -857,6 +873,54 @@ function fetchAndProxy(targetUrl, req, res) {
   }
   proxyReq.end();
 }
+
+/* ─────────────────────────────────────
+   Route /kyky-worker-patch.js
+   Script injecté dans les Web Workers via importScripts()
+   pour proxifier les fetch() faits depuis le worker (HLS.js, etc.)
+───────────────────────────────────────*/
+app.get('/kyky-worker-patch.js', (req, res) => {
+  const origin = req.query.origin || '';
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.end(`
+(function(){
+  var PO='${PROXY_ORIGIN}';
+  var BASE='${encodeURIComponent(origin)}' ? decodeURIComponent('${encodeURIComponent(origin)}') : '';
+  var BYPASS=['imasdk.googleapis.com','apis.google.com','googletagservices.com',
+    'googletagmanager.com','doubleclick.net','googlesyndication.com'];
+  function isBypass(abs){
+    try{var h=new URL(abs).hostname;return BYPASS.some(function(d){return h===d||h.endsWith('.'+d);});}
+    catch(e){return false;}
+  }
+  function wrap(url){
+    if(!url||typeof url!=='string') return url;
+    var u=url.trim();
+    if(!u||/^(data:|blob:|javascript:)/.test(u)) return url;
+    if(u.indexOf(PO)===0) return url;
+    try{
+      var abs=new URL(u, BASE||self.location.href).href;
+      if(abs.indexOf(PO)===0) return url;
+      if(isBypass(abs)) return abs;
+      return PO+'/proxy?url='+encodeURIComponent(abs);
+    }catch(e){return url;}
+  }
+  var _fetch=self.fetch.bind(self);
+  self.fetch=function(input,init){
+    if(typeof input==='string') input=wrap(input);
+    else if(input&&input.url) input=new Request(wrap(input.url),input);
+    return _fetch(input,init);
+  };
+  var _xhrOpen=XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open=function(){
+    var a=[].slice.call(arguments);
+    if(typeof a[1]==='string') a[1]=wrap(a[1]);
+    return _xhrOpen.apply(this,a);
+  };
+})();
+`);
+});
 
 /* ─────────────────────────────────────
    Route /proxy?url=
