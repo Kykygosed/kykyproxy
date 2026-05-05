@@ -787,13 +787,29 @@ function fetchAndProxy(targetUrl, req, res) {
         res.end(text);
       });
       stream.on('error', onError);
+    } else if (
+      contentType.includes('mpegurl') ||
+      contentType.includes('x-mpegurl') ||
+      contentType.includes('vnd.apple.mpegurl') ||
+      target.pathname.endsWith('.m3u8')
+    ) {
+      /* M3U8 : réécriture des URLs de segments .ts / sous-playlists.
+         Les manifests HLS contiennent des URLs relatives ou absolues.
+         Sans réécriture le navigateur les charge directement => CORS bloque
+         => lecture avortée ("Play promise rejected in snapshot restore"). */
+      const chunks = [];
+      stream.on('data', c => chunks.push(c));
+      stream.on('end', () => {
+        let text = Buffer.concat(chunks).toString('utf-8');
+        text = rewriteM3u8(text, target);
+        res.setHeader('content-type', 'application/x-mpegURL; charset=utf-8');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.end(text);
+      });
+      stream.on('error', onError);
     } else {
       /* JS et tout le reste : pipe direct SANS réécriture.
-         Le script runtime injecté dans le HTML (buildInjectedScript)
-         intercepte fetch / XHR / createElement à l'exécution et
-         proxifie les URLs dynamiquement — réécrire le JS statiquement
-         avec des regex est dangereux sur les bundles minifiés et
-         provoque des SyntaxError (token ':', numeric literal…). */
+         Le script runtime intercepte fetch/XHR/createElement dynamiquement. */
       stream.pipe(res);
       stream.on('error', onError);
     }
@@ -1013,6 +1029,24 @@ function rewriteJs(js, base) {
 /* ─────────────────────────────────────
    Réécriture CSS
 ───────────────────────────────────────*/
+/* ─────────────────────────────────────
+   Réécriture M3U8 (manifests HLS)
+───────────────────────────────────────*/
+function rewriteM3u8(text, base) {
+  return text.split('\n').map(line => {
+    const trimmed = line.trim();
+    // Ignorer les commentaires et lignes vides
+    if (!trimmed || trimmed.startsWith('#')) {
+      // Réécrire les URI dans les tags EXT-X-KEY, EXT-X-MAP etc.
+      return line.replace(/URI="([^"]+)"/g, (_, uri) => {
+        return 'URI="' + toProxyUrl(uri, base) + '"';
+      });
+    }
+    // Réécrire les URLs de segments (.ts, .aac, .mp4, sous-playlists .m3u8)
+    return toProxyUrl(trimmed, base);
+  }).join('\n');
+}
+
 function rewriteCss(css, base) {
   css = css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi,
     (_, q, u) => `url(${q}${toProxyUrl(u, base)}${q})`);
