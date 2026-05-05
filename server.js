@@ -485,6 +485,24 @@ function buildInjectedScript(targetOrigin) {
   var BASE = '${targetOrigin}';
   var PFX  = PO + '/proxy?url=';
 
+  /* Domaines à ne PAS proxifier — ils vérifient leur propre origine au runtime */
+  var BYPASS=[
+    'imasdk.googleapis.com',
+    'apis.google.com',
+    'googletagservices.com',
+    'googletagmanager.com',
+    'doubleclick.net',
+    'googlesyndication.com',
+    'adservice.google.com',
+    'securepubads.g.doubleclick.net',
+  ];
+  function isBypass(abs){
+    try{
+      var h=new URL(abs).hostname;
+      return BYPASS.some(function(d){return h===d||h.slice(-(d.length+1))==='.'+d;});
+    }catch(e){return false;}
+  }
+
   function wrap(url){
     if(!url||typeof url!=='string') return url;
     var u=url.trim();
@@ -493,6 +511,7 @@ function buildInjectedScript(targetOrigin) {
     try{
       var abs=new URL(u,BASE).href;
       if(abs.indexOf(PO)===0) return url;
+      if(isBypass(abs)) return abs; // laisser charger directement
       return PFX+encodeURIComponent(abs);
     }catch(e){return url;}
   }
@@ -845,11 +864,35 @@ app.use((req, res) => {
 ───────────────────────────────────────*/
 const SKIP = /^(data:|javascript:|mailto:|tel:|#|blob:|about:)/i;
 
+/* Domaines qui DOIVENT être chargés directement (pas via le proxy).
+   Raison : ils vérifient leur propre origine au runtime et plantent
+   si l'URL ne correspond pas à leur domaine officiel.
+   Cas typique : Google IMA SDK → bloque la vidéo si mal chargé. */
+const BYPASS_DOMAINS = [
+  'imasdk.googleapis.com',
+  'apis.google.com',
+  'googletagservices.com',
+  'googletagmanager.com',
+  'doubleclick.net',
+  'googlesyndication.com',
+  'adservice.google.com',
+  'static.doubleclick.net',
+  'securepubads.g.doubleclick.net',
+];
+
+function isBypass(url) {
+  try {
+    const host = new URL(url).hostname;
+    return BYPASS_DOMAINS.some(d => host === d || host.endsWith('.' + d));
+  } catch { return false; }
+}
+
 function toProxyUrl(raw, base) {
   try {
     if (!raw || !raw.trim() || SKIP.test(raw.trim())) return raw;
     const abs = new URL(raw.trim(), base).toString();
     if (abs.startsWith(PROXY_ORIGIN)) return raw;
+    if (isBypass(abs)) return abs; // laisser passer tel quel
     return PROXY_ORIGIN + '/proxy?url=' + encodeURIComponent(abs);
   } catch { return raw; }
 }
