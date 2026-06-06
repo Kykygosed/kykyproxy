@@ -16,7 +16,7 @@ function parseCookies(req) {
 const app  = express();
 const PORT = process.env.PORT || 3000;
 const PROXY_ORIGIN   = (process.env.PROXY_ORIGIN  || 'https://kykyproxy.onrender.com').replace(/\/$/, '');
-const FRONTEND_URL   = (process.env.FRONTEND_URL  || 'https://kykysearch.netlify.app');
+const FRONTEND_URL   = (process.env.FRONTEND_URL  || 'https://kykysearch.vercel.app');
 
 /* ─────────────────────────────────────
    Middlewares
